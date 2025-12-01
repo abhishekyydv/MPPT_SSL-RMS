@@ -1,39 +1,24 @@
-export default function DeviceCard({ dev, live }) {
-  const online =
-    live &&
-    Date.now() - new Date(live.time || live.timestamp).getTime() < 60 * 1000;
+import { Link } from "react-router-dom";
 
+export default function DeviceCard({ dev, latest }) {
   return (
-    <div className="border rounded shadow p-4 bg-white hover:shadow-lg">
-      <h2 className="text-lg font-bold">IMEI: {dev.imei}</h2>
-      <p>Name: {dev.name}</p>
-      <p>Location: {dev.location}</p>
+    <Link to={`/device/${dev.imei}`}>
+      <div className="border rounded shadow p-4 bg-white hover:shadow-lg transition cursor-pointer">
+        <h2 className="text-xl font-bold mb-2">{dev.name || "Unnamed Device"}</h2>
+        <p><strong>IMEI:</strong> {dev.imei}</p>
+        <p><strong>Location:</strong> {dev.location || "-"}</p>
 
-      <div className="mt-2">
-        {live ? (
-          <>
-            <p>🔋 Battery: {live.battery} V</p>
-            <p>☀ Solar: {live.solar} V</p>
-            <p>💡 Load: {live.load} V</p>
-            <p>⚡ Current: {live.current} A</p>
-          </>
+        {latest ? (
+          <div className="mt-3 bg-gray-100 p-3 rounded">
+            <p><strong>Battery:</strong> {latest.batteryVoltage || latest.battery} V</p>
+            <p><strong>Solar:</strong> {latest.solarVoltage || latest.solar} V</p>
+            <p><strong>Load:</strong> {latest.loadVoltage || latest.load} V</p>
+            <p><strong>Current:</strong> {latest.current} A</p>
+          </div>
         ) : (
-          <p className="text-gray-500">No telemetry yet</p>
+          <div className="mt-3 text-gray-500 text-sm">No data received yet</div>
         )}
       </div>
-
-      <p className="text-sm text-gray-500 mt-2">
-        Last Update:{" "}
-        {live ? new Date(live.time || live.timestamp).toLocaleString() : "N/A"}
-      </p>
-
-      <p
-        className={`mt-2 font-semibold ${
-          online ? "text-green-600" : "text-red-600"
-        }`}
-      >
-        {online ? "● Online" : "● Offline"}
-      </p>
-    </div>
+    </Link>
   );
 }

@@ -3,50 +3,64 @@ import api from "../api/axios";
 import Navbar from "../components/Navbar";
 
 export default function AddDevice() {
-  const [imei, setIMEI] = useState("");
-  const [name, setName] = useState("");
-  const [location, setLocation] = useState("");
-  const [msg, setMsg] = useState("");
+  const [form, setForm] = useState({
+    imei: "",
+    name: "",
+    location: "",
+    poleId: "",
+    simNumber: "",
+    installer: "",
+  });
 
   const handleSubmit = async (e) => {
     e.preventDefault();
 
     try {
-      await api.post("/devices", { imei, name, location });
-      setMsg("Device Added Successfully!");
-    } catch {
-      setMsg("Error adding device");
+      await api.post("/devices", form);
+      alert("Device added");
+      setForm({
+        imei: "",
+        name: "",
+        location: "",
+        poleId: "",
+        simNumber: "",
+        installer: "",
+      });
+    } catch (err) {
+      alert(err.response?.data?.msg || "Error");
     }
   };
 
   return (
     <>
       <Navbar />
-      <div className="p-6 max-w-md mx-auto bg-white shadow rounded">
-        <h2 className="text-xl font-bold mb-4">Add Device</h2>
 
-        {msg && <p className="text-green-600">{msg}</p>}
+      <div className="max-w-xl mx-auto p-6">
+        <h2 className="text-2xl font-bold mb-4">Add New Device</h2>
 
-        <form onSubmit={handleSubmit}>
-          <input
-            placeholder="IMEI"
-            className="w-full border p-2 mb-3"
-            onChange={(e) => setIMEI(e.target.value)}
-          />
+        <form
+          onSubmit={handleSubmit}
+          className="bg-white p-6 shadow rounded space-y-4"
+        >
+          {[
+            "imei",
+            "name",
+            "location",
+            "poleId",
+            "simNumber",
+            "installer",
+          ].map((field) => (
+            <input
+              key={field}
+              type="text"
+              placeholder={field.toUpperCase()}
+              value={form[field]}
+              onChange={(e) => setForm({ ...form, [field]: e.target.value })}
+              className="w-full p-2 border rounded"
+            />
+          ))}
 
-          <input
-            placeholder="Device Name"
-            className="w-full border p-2 mb-3"
-            onChange={(e) => setName(e.target.value)}
-          />
-
-          <input
-            placeholder="Location"
-            className="w-full border p-2 mb-3"
-            onChange={(e) => setLocation(e.target.value)}
-          />
-
-          <button className="bg-blue-600 text-white w-full py-2 rounded">
+          <button className="bg-blue-600 w-full p-2 text-white rounded">
             Add Device
           </button>
         </form>

@@ -1,29 +1,85 @@
-// routes/auth.js
 import express from "express";
 import jwt from "jsonwebtoken";
+import User from "../models/User.js";
+import bcrypt from "bcryptjs";
 
 const router = express.Router();
 
-router.post("/login", (req, res) => {
-  const { username, password } = req.body;
 
-  const MASTER = { username: "master", password: "master123", role: "master" };
-  const USER = { username: "user", password: "user123", role: "user" };
+// ---------------------------
+// LOGIN API
+// ---------------------------
+router.post("/login", async (req, res) => {
+  try {
+    const { username, password } = req.body;
 
-  let found = null;
-  if (username === MASTER.username && password === MASTER.password)
-    found = MASTER;
-  if (username === USER.username && password === USER.password) found = USER;
+    // Check if user exists
+    const user = await User.findOne({ username });
 
-  if (!found) return res.status(401).json({ msg: "Invalid Credentials" });
+    if (!user)
+      return res.status(401).json({ msg: "Invalid username or password" });
 
-  const token = jwt.sign(
-    { username: found.username, role: found.role },
-    process.env.JWT_SECRET || "devsecret",
-    { expiresIn: "7d" }
-  );
+    // Check password (plain text for now, bcrypt can be added later)
+    const isMatch = password === user.password;
 
-  res.json({ token, role: found.role });
+    if (!isMatch)
+      return res.status(401).json({ msg: "Invalid username or password" });
+
+    // Generate JWT token
+    const token = jwt.sign(
+      {
+        id: user._id,
+        username: user.username,
+        role: user.role,
+      },
+      process.env.JWT_SECRET || "devsecret",
+      { expiresIn: "7d" }
+    );
+
+    res.json({
+      msg: "Login successful",
+      token,
+      role: user.role,
+      username: user.username,
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ msg: "Server error", err });
+  }
 });
 
-export default router; // <-- 100% IMPORTANT
+
+// ---------------------------
+// MASTER CREATES NEW USER
+// ---------------------------
+
+router.post("/register", async (req, res) => {
+  try {
+    const { username, password, role } = req.body;
+
+    // Only master login will be able to access this route (middleware later)
+    if (!username || !password || !role)
+      return res.status(400).json({ msg: "All fields required" });
+
+    const exists = await User.findOne({ username });
+
+    if (exists)
+      return res.status(400).json({ msg: "Username already exists" });
+
+    const newUser = new User({
+      username,
+      password, // bcrypt later
+      role,
+    });
+
+    await newUser.save();
+
+    res.json({ msg: "User created", user: newUser });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ msg: "Server error", err });
+  }
+});
+
+
+export default router;

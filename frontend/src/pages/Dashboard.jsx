@@ -2,62 +2,43 @@ import { useEffect, useState } from "react";
 import api from "../api/axios";
 import Navbar from "../components/Navbar";
 import DeviceCard from "../components/DeviceCard";
-import { io } from "socket.io-client";
+import useAuth from "../hooks/useAuth";
+import io from "socket.io-client";
+
+const socket = io(import.meta.env.VITE_API_BASE_URL);
 
 export default function Dashboard() {
+  const { user } = useAuth();
   const [devices, setDevices] = useState([]);
-  const [latestData, setLatestData] = useState({}); // IMEI → latest telemetry map
+  const [latest, setLatest] = useState({}); // { imei: latestData }
 
-  // ⬅️ 1. Fetch all devices
-  const fetchDevices = async () => {
-    try {
-      const res = await api.get("/devices");
-      setDevices(res.data);
-    } catch (err) {
-      console.error("Error fetching devices:", err);
-    }
+  const loadDevices = async () => {
+    const res = await api.get("/devices"); 
+    setDevices(res.data);
   };
 
-  // ⬅️ 2. Fetch latest telemetry for all devices
-  const fetchLatestTelemetry = async () => {
-    try {
-      const res = await api.get("/telemetry/latest"); // you'll add this API next
-      const map = {};
-      res.data.forEach((item) => {
-        map[item.imei] = item;
-      });
-      setLatestData(map);
-    } catch (err) {
-      console.error("Error fetching latest telemetry:", err);
-    }
-  };
-
-  // ⬅️ 3. Setup socket listeners
-  useEffect(() => {
-    const socket = io("http://localhost:4001");
-
-    socket.on("connect", () => {
-      console.log("Socket connected:", socket.id);
+  const loadLatest = async () => {
+    const res = await api.get("/telemetry/latest");
+    const mapping = {};
+    res.data.forEach((d) => {
+      mapping[d.imei] = d;
     });
+    setLatest(mapping);
+  };
 
+  useEffect(() => {
+    loadDevices();
+    loadLatest();
+
+    // Live Update
     socket.on("telemetry:update", (data) => {
-      console.log("LIVE UPDATE RECEIVED:", data);
-
-      setLatestData((prev) => ({
+      setLatest((prev) => ({
         ...prev,
-        [data.imei]: {
-          ...data,
-          timestamp: new Date(),
-        },
+        [data.imei]: data,
       }));
     });
 
-    return () => socket.disconnect();
-  }, []);
-
-  useEffect(() => {
-    fetchDevices();
-    fetchLatestTelemetry();
+    return () => socket.off("telemetry:update");
   }, []);
 
   return (
@@ -65,33 +46,13 @@ export default function Dashboard() {
       <Navbar />
 
       <div className="p-6">
-        <div className="flex justify-between items-center">
-          <h1 className="text-2xl font-bold mb-4">All Devices</h1>
+        <h1 className="text-3xl font-bold mb-5">Dashboard</h1>
 
-          <button
-            onClick={() => {
-              fetchDevices();
-              fetchLatestTelemetry();
-            }}
-            className="bg-blue-600 text-white px-4 py-2 rounded shadow hover:bg-blue-700"
-          >
-            Refresh
-          </button>
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-5">
+          {devices.map((d) => (
+            <DeviceCard key={d._id} dev={d} latest={latest[d.imei]} />
+          ))}
         </div>
-
-        {devices.length === 0 ? (
-          <p className="text-gray-600">No devices found.</p>
-        ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-5">
-            {devices.map((dev) => (
-              <DeviceCard
-                key={dev._id}
-                dev={dev}
-                live={latestData[dev.imei]} // pass live telemetry
-              />
-            ))}
-          </div>
-        )}
       </div>
     </>
   );

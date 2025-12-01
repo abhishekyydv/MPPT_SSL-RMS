@@ -5,6 +5,10 @@ import mongoose from "mongoose";
 import cors from "cors";
 import http from "http";
 import { Server as SocketIOServer } from "socket.io";
+import usersRouter from "./routes/users.js";
+
+
+
 
 dotenv.config();
 
@@ -55,6 +59,7 @@ import telemetryRouter from "./routes/telemetry.js";
 app.use("/api/auth", authRouter);
 app.use("/api/devices", devicesRouter);
 app.use("/api/telemetry", telemetryRouter);
+app.use("/api/users", usersRouter);
 
 // Socket events (basic)
 io.on("connection", (socket) => {
