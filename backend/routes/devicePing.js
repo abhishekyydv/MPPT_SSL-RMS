@@ -4,38 +4,43 @@ import Telemetry from "../models/TelemetryLog.js";
 
 const router = express.Router();
 
-/**
- * Device GET Handler
- * Example URL received from Quectel:
- * /api/device-ping/<IMEI>70,01.3,00.02,002.0,01.4,...
- *
- * We decode it like this:
- * - IMEI = first 15 digits
- * - data = rest CSV fields
- */
-router.get("/:packet", async (req, res) => {
+function safeNum(v) {
+  if (v === undefined || v === null) return null;
+  const n = parseFloat(String(v).trim());
+  return isNaN(n) ? null : n;
+}
+
+router.get("/:payload", async (req, res) => {
   try {
-    const raw = req.params.packet;
+    const raw = req.params.payload;
 
-    // IMEI always 15 digits
-    const imei = raw.substring(0, 15);
+    // Split CSV properly
+    const parts = raw.split(",").map(p => p.trim());
 
-    // Remaining CSV data
-    const csv = raw.substring(15);
-    const fields = csv.split(",");
+    // First part is IMEI
+    const imei = parts[0];
 
-    // Map the first few fields (assuming format)
-    const battery = parseFloat(fields[1]);
-    const solar = parseFloat(fields[3]);
-    const load = parseFloat(fields[5]);
-    const current = parseFloat(fields[7]);
-    const efficiency = parseFloat(fields[9]);
+    if (!imei || imei.length < 10) {
+      return res.status(400).json({ msg: "Invalid IMEI", imei });
+    }
 
+    // Ensure device exists
     const device = await Device.findOne({ imei });
     if (!device) {
       return res.status(404).json({ msg: "Device not registered", imei });
     }
 
+    // Extract known telemetry fields
+    const battery     = safeNum(parts[2]);  // Battery voltage
+    const solar       = safeNum(parts[3]);  // Solar voltage
+    const load        = safeNum(parts[4]);  // Load voltage
+    const current     = safeNum(parts[5]);  // Current
+    const efficiency  = safeNum(parts[6]);  // Efficiency
+    const temperature = safeNum(parts[17]); // temperature (maybe)
+    const humidity    = safeNum(parts[18]); // humidity (maybe)
+    const lux         = safeNum(parts[19]); // lux/raw adc
+
+    // Save to database
     const log = new Telemetry({
       deviceId: device._id,
       imei,
@@ -44,12 +49,15 @@ router.get("/:packet", async (req, res) => {
       loadVoltage: load,
       current,
       efficiency,
-      rawPayload: { imei, csv },
+      temperature,
+      humidity,
+      lux,
+      rawPayload: parts,
     });
 
     await log.save();
 
-    // Emit to dashboard live
+    // Emit live update
     req.io.emit("telemetry:update", {
       imei,
       battery,
@@ -57,13 +65,28 @@ router.get("/:packet", async (req, res) => {
       load,
       current,
       efficiency,
-      time: new Date().toISOString(),
+      temperature,
+      humidity,
+      lux,
+      time: new Date().toISOString()
     });
 
-    return res.json({ msg: "OK", imei, battery, solar, load, current, efficiency });
+    return res.json({
+      msg: "OK",
+      imei,
+      battery,
+      solar,
+      load,
+      current,
+      efficiency,
+      temperature,
+      humidity,
+      lux
+    });
+
   } catch (err) {
-    console.error("DevicePing error:", err);
-    res.status(500).json({ msg: "Server Error", err });
+    console.error("Telem parse error:", err);
+    return res.status(500).json({ msg: "Server Error", err });
   }
 });
 
