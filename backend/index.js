@@ -5,44 +5,60 @@ import mongoose from "mongoose";
 import cors from "cors";
 import http from "http";
 import { Server as SocketIOServer } from "socket.io";
+
 import usersRouter from "./routes/users.js";
-
-
-
+import authRouter from "./routes/auth.js";
+import devicesRouter from "./routes/devices.js";
+import telemetryRouter from "./routes/telemetry.js";
 
 dotenv.config();
 
 const app = express();
-const PORT = process.env.PORT || 4002;
-const DB_URI = process.env.MONGODB_URI || process.env.MONGO_URI; // support both names
+const PORT = process.env.PORT || 4001;
+const DB_URI = process.env.MONGODB_URI;
 
-// Middlewares
-app.use(cors());
-app.use(express.json()); // important to parse JSON bodies
+// ⭐ WHITELIST ALLOWED FRONTEND ORIGINS
+const allowedOrigins = [
+  "http://localhost:5173",
+  "https://mppt-ssl-rms-frontend.netlify.app"
+];
 
-// Create HTTP server + Socket.io
+// ⭐ GLOBAL CORS MIDDLEWARE
+app.use(
+  cors({
+    origin: allowedOrigins,
+    credentials: true,
+  })
+);
+
+// ⭐ JSON BODY PARSER
+app.use(express.json());
+
+// ⭐ CREATE HTTP SERVER + SOCKET.IO
 const server = http.createServer(app);
+
 const io = new SocketIOServer(server, {
-  cors: { origin: "*" }, // change origin in production
+  cors: {
+    origin: allowedOrigins,
+    methods: ["GET", "POST"],
+  },
 });
 
-// Attach io to req so routes can emit: req.io.emit(...)
+// ⭐ Attach io to req for routes
 app.use((req, _res, next) => {
   req.io = io;
   next();
 });
 
-// Basic health route
+// ⭐ Basic health route
 app.get("/", (_req, res) =>
   res.json({ ok: true, time: new Date().toISOString() })
 );
 
-// Connect to MongoDB
+// ⭐ Connect to MongoDB
 async function connectDB() {
   try {
-    await mongoose.connect(DB_URI, {
-      // recommended options are default in mongoose 6+, but you can add if needed
-    });
+    await mongoose.connect(DB_URI);
     console.log("MongoDB Connected");
   } catch (err) {
     console.error("MongoDB connection error:", err);
@@ -51,17 +67,13 @@ async function connectDB() {
 }
 connectDB();
 
-// Routes (create these files next)
-import authRouter from "./routes/auth.js";
-import devicesRouter from "./routes/devices.js";
-import telemetryRouter from "./routes/telemetry.js";
-
+// ⭐ API ROUTES
 app.use("/api/auth", authRouter);
 app.use("/api/devices", devicesRouter);
 app.use("/api/telemetry", telemetryRouter);
 app.use("/api/users", usersRouter);
 
-// Socket events (basic)
+// ⭐ Socket Events
 io.on("connection", (socket) => {
   console.log("Socket connected:", socket.id);
   socket.on("disconnect", () => {
@@ -69,7 +81,7 @@ io.on("connection", (socket) => {
   });
 });
 
-// Start server
+// ⭐ Start Server
 server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
