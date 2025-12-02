@@ -1,4 +1,5 @@
 // index.js
+import devicePingRouter from "./routes/devicePing.js";
 import express from "express";
 import dotenv from "dotenv";
 import mongoose from "mongoose";
@@ -72,6 +73,8 @@ app.use("/api/auth", authRouter);
 app.use("/api/devices", devicesRouter);
 app.use("/api/telemetry", telemetryRouter);
 app.use("/api/users", usersRouter);
+app.use("/api/device-ping", devicePingRouter);
+
 
 // ⭐ Socket Events
 io.on("connection", (socket) => {
