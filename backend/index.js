@@ -1,86 +1,139 @@
+// index.js
 import express from "express";
-import Device from "../models/Device.js";
-import Telemetry from "../models/TelemetryLog.js";
+import dotenv from "dotenv";
+import mongoose from "mongoose";
+import cors from "cors";
+import http from "http";
+import { Server as SocketIOServer } from "socket.io";
 
-const router = express.Router();
+import usersRouter from "./routes/users.js";
+import authRouter from "./routes/auth.js";
+import devicesRouter from "./routes/devices.js";
+import telemetryRouter from "./routes/telemetry.js";
+import devicePingRouter from "./routes/devicePing.js";
 
-// ---- Server Response Values (Required by Quectel) ----
-const FW_VERSION = "1007";
-const FW_CHECKSUM = "08";
-const UPDATE_RATE = "010";     // seconds or minutes – as per your system
-const UPDATE_CHECKSUM = "01";
+import Telemetry from "./models/TelemetryLog.js";
+import Device from "./models/Device.js";
 
-// ---- Safe number parser ----
-function safeNum(v) {
-  if (!v) return null;
-  const n = parseFloat(v.trim());
-  return isNaN(n) ? null : n;
-}
+dotenv.config();
 
-// ---- ULTRA SHORT ROUTE ----
-//  Example packet:
-//  /p/861268072771174,00,00.0,00.00,000.0,00.0,00.00,000.0
-router.get("/:d", async (req, res) => {
+const app = express();
+const PORT = process.env.PORT || 4001;
+const DB_URI = process.env.MONGODB_URI;
+
+// Allowed frontend URLs
+const allowedOrigins = [
+  "http://localhost:5173",
+  "https://mppt-ssl-rms-frontend.netlify.app"
+];
+
+app.use(
+  cors({
+    origin: allowedOrigins,
+    credentials: true,
+  })
+);
+
+app.use(express.json());
+
+// Create HTTP + Socket.io
+const server = http.createServer(app);
+
+const io = new SocketIOServer(server, {
+  cors: { origin: allowedOrigins, methods: ["GET", "POST"] },
+});
+
+// attach socket.io to req
+app.use((req, _res, next) => {
+  req.io = io;
+  next();
+});
+
+// Health route
+app.get("/", (_req, res) =>
+  res.json({ ok: true, time: new Date().toISOString() })
+);
+
+// ⭐ CONNECT TO MONGODB
+async function connectDB() {
   try {
-    const raw = req.params.d;  // complete CSV string
+    await mongoose.connect(DB_URI);
+    console.log("MongoDB Connected");
+  } catch (err) {
+    console.error("MongoDB connection error:", err);
+    process.exit(1);
+  }
+}
+connectDB();
 
-    const parts = raw.split(",").map(p => p.trim());
-    if (parts.length < 3) return res.send("ERR1");  // not enough parts
+// ⭐ ORIGINAL ROUTES
+app.use("/api/auth", authRouter);
+app.use("/api/devices", devicesRouter);
+app.use("/api/telemetry", telemetryRouter);
+app.use("/api/users", usersRouter);
+app.use("/api/device-ping", devicePingRouter);
+
+// ⭐⭐⭐ SUPER-SHORT URL ENDPOINT FOR QUECTEL (NO CODE CHANGE REQUIRED)
+app.get("/p/:payload", async (req, res) => {
+  try {
+    const p = req.params.payload.trim();
+
+    const parts = p.split(",");
 
     const imei = parts[0];
-    if (!imei || imei.length < 10) return res.send("ERR2");
 
+    if (!imei) return res.send("NO IMEI");
+
+    // find device in DB
     const device = await Device.findOne({ imei });
-    if (!device) return res.send("ERR3");
+    if (!device) return res.send("DEVICE NOT REGISTERED");
 
-    // Map the data based on fixed Quectel order
-    const batteryVoltage = safeNum(parts[2]);
-    const solarVoltage   = safeNum(parts[3]);
-    const loadVoltage    = safeNum(parts[4]);
-    const current        = safeNum(parts[5]);
-    const efficiency     = safeNum(parts[6]);
+    // parse sensor values (these indexes match your Quectel packet)
+    const battery = Number(parts[2]) || 0;
+    const solar = Number(parts[3]) || 0;
+    const load = Number(parts[4]) || 0;
+    const current = Number(parts[5]) || 0;
+    const efficiency = Number(parts[6]) || 0;
 
-    const temperature = safeNum(parts[17]);
-    const humidity    = safeNum(parts[18]);
-    const lux         = safeNum(parts[19]);
-
-    const log = new Telemetry({
+    // save telemetry
+    await Telemetry.create({
       deviceId: device._id,
       imei,
-      batteryVoltage,
-      solarVoltage,
-      loadVoltage,
+      batteryVoltage: battery,
+      solarVoltage: solar,
+      loadVoltage: load,
       current,
       efficiency,
-      temperature,
-      humidity,
-      lux,
-      rawPayload: parts
+      rawPayload: parts,
     });
 
-    await log.save();
-
-    // Emit live socket update for dashboard
+    // real-time update emit
     req.io.emit("telemetry:update", {
       imei,
-      batteryVoltage,
-      solarVoltage,
-      loadVoltage,
+      battery,
+      solar,
+      load,
       current,
       efficiency,
-      temperature,
-      humidity,
-      lux,
-      time: new Date().toISOString()
+      time: new Date().toISOString(),
     });
 
-    // ⭐ MUST SEND TEXT RESPONSE THAT QUECTEL EXPECTS
-    return res.send(`PACK,${FW_VERSION},${FW_CHECKSUM},${UPDATE_RATE},${UPDATE_CHECKSUM}`);
-
+    res.send("OK");
   } catch (err) {
-    console.error("Ping error:", err);
-    return res.send("ERRX");
+    console.error("SHORT-URL ERROR:", err);
+    res.send("ERR");
   }
 });
 
-export default router;
+// Socket events
+io.on("connection", (socket) => {
+  console.log("Socket connected:", socket.id);
+  socket.on("disconnect", () => {
+    console.log("Socket disconnected:", socket.id);
+  });
+});
+
+// Start server
+server.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
+});
