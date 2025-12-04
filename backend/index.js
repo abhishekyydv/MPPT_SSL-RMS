@@ -5,10 +5,10 @@ import Telemetry from "../models/TelemetryLog.js";
 const router = express.Router();
 
 // ---- Server Response Values (Required by Quectel) ----
-const FW_VERSION = "0001";
-const FW_CHECKSUM = "1";
-const UPDATE_RATE = "300";     // seconds or minutes – as per your system
-const UPDATE_CHECKSUM = "3";
+const FW_VERSION = "1007";
+const FW_CHECKSUM = "08";
+const UPDATE_RATE = "010";     // seconds or minutes – as per your system
+const UPDATE_CHECKSUM = "01";
 
 // ---- Safe number parser ----
 function safeNum(v) {
