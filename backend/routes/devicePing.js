@@ -4,72 +4,72 @@ import Telemetry from "../models/TelemetryLog.js";
 
 const router = express.Router();
 
-// ---- Server Response Values (required by Quectel) ----
-const FW_VERSION = "1007";       // your firmware version
-const FW_CHECKSUM = "08";        // sum of digits in version
-const UPDATE_RATE = "010";       // minutes/seconds as needed
-const UPDATE_CHECKSUM = "01";    // sum of digits in update rate
+// ======================================================
+// 🔥 Quectel Response Fields
+// ======================================================
+const FW_VERSION = "1007";
+const FW_CHECKSUM = "08";
+const UPDATE_RATE = "010";
+const UPDATE_CHECKSUM = "01";
 
-// ---- Safe number parser ----
+// Safe number parser
 function safeNum(v) {
   if (v === undefined || v === null) return null;
   const n = parseFloat(String(v).trim());
   return isNaN(n) ? null : n;
 }
 
-// ------------------------------------------------------------------
-// 🔥 Ultra-short data capture route for Quectel
-// Example:
-//    /p/861268072771174,00,012.3,000.4,001.2,013.4,001.2,020.2, ...
-// ------------------------------------------------------------------
-router.get("/:d", async (req, res) => {
+// ======================================================
+// Main handler for /p/:d and /api/device-ping/:d
+// ======================================================
+async function handlePacket(req, res) {
   try {
-    const raw = req.params.d;
-    const parts = raw.split(",").map(x => x.trim());
+    const raw = req.params.d?.trim();
+    if (!raw) return res.send("ERR0");
 
-    if (parts.length < 5) return res.send("ERR1");
+    const parts = raw.split(",").map((x) => x.trim());
+    if (parts.length < 10) return res.send("ERR1");
 
-    // IMEI
+    // ----------- IMEI -----------
     const imei = parts[0];
     if (!imei || imei.length < 10) return res.send("ERR2");
 
-    // Device registered check
+    // ----------- Device Exists? -----------
     const device = await Device.findOne({ imei });
     if (!device) return res.send("ERR3");
 
-    // ----------- Quectel FIELD MAPPING -------------------
-    // Index reference based on your Quectel HTTP_Create_String()
+    // ======================================================
+    // FIELD MAPPING BASED ON HTTP_Create_String() (Exact)
+    // ======================================================
+    const battPercent = safeNum(parts[1]);
+    const battVoltage = safeNum(parts[2]);
+    const battCurrent = safeNum(parts[3]);
+    const battPower = safeNum(parts[4]);
 
-    const battPercent     = safeNum(parts[1]);
-    const battVoltage     = safeNum(parts[2]);
-    const battCurrent     = safeNum(parts[3]);
-    const battPower       = safeNum(parts[4]);
+    const solarVoltage = safeNum(parts[5]);
+    const solarCurrent = safeNum(parts[6]);
+    const solarPower = safeNum(parts[7]);
 
-    const solarVoltage    = safeNum(parts[5]);
-    const solarCurrent    = safeNum(parts[6]);
-    const solarPower      = safeNum(parts[7]);
+    const loadVoltage = safeNum(parts[8]);
+    const loadCurrent = safeNum(parts[9]);
+    const loadPower = safeNum(parts[10]);
 
-    const loadVoltage     = safeNum(parts[8]);
-    const loadCurrent     = safeNum(parts[9]);
-    const loadPower       = safeNum(parts[10]);
+    const statusByte = parts[11] ?? null;
+    const changeFlag = parts[12] ?? null;
 
-    const statusByte      = parts[11] ?? null;
-    const changeFlag      = parts[12] ?? null;
+    const packetType = safeNum(parts[13]);
+    const fullMin = safeNum(parts[14]);
+    const dimMin = safeNum(parts[15]);
+    const totalHours = safeNum(parts[16]);
 
-    const packetType      = safeNum(parts[13]);
-    const fullMin         = safeNum(parts[14]);
-    const dimMin          = safeNum(parts[15]);
-    const totalHours      = safeNum(parts[16]);
+    const kwh = parts[17];
+    const tkwh = parts[18];
+    const projectId = safeNum(parts[19]);
 
-    const kwh             = parts[17];
-    const tkwh            = parts[18];
-    const projectId       = safeNum(parts[19]);
-    // parts[20] = trailing "0" (ignored)
-
-    // -----------------------------------------------------
-
-    // Save telemetry
-    const log = new Telemetry({
+    // ======================================================
+    // SAVE FULL TELEMETRY LOG
+    // ======================================================
+    await Telemetry.create({
       imei,
       deviceId: device._id,
 
@@ -97,40 +97,65 @@ router.get("/:d", async (req, res) => {
       kwh,
       tkwh,
       projectId,
-
       rawPayload: parts,
     });
 
-    await log.save();
+    // ======================================================
+    // UPDATE DEVICE STATUS + LAST TELEMETRY
+    // ======================================================
+    device.isOnline = true;
+    device.lastPingAt = new Date();
 
-    // Emit live data
-    req.io.emit("telemetry:update", {
-      imei,
+    // Auto store projectId if newly received
+    if (projectId && !device.projectId) device.projectId = projectId;
+
+    device.lastTelemetry = {
       battPercent,
       battVoltage,
       battCurrent,
       battPower,
-
       solarVoltage,
       solarCurrent,
       solarPower,
-
       loadVoltage,
       loadCurrent,
       loadPower,
+      updatedAt: new Date(),
+    };
 
+    await device.save();
+
+    // ======================================================
+    // SEND LIVE SOCKET UPDATE TO DASHBOARD
+    // ======================================================
+    req.io.emit("telemetry:update", {
+      imei,
+      battPercent,
+      battVoltage,
+      solarVoltage,
+      loadVoltage,
+      loadCurrent,
+      solarCurrent,
+      battCurrent,
       time: new Date().toISOString(),
     });
 
-    // ⭐ RETURN ACK EXACT FORMAT (VERIFIED BY QUECTEL CODE)
+    // ======================================================
+    // SEND ACK THAT QUECTEL EXPECTS (VERY IMPORTANT)
+    // ======================================================
     return res.send(
       `PACK,${FW_VERSION},${FW_CHECKSUM},${UPDATE_RATE},${UPDATE_CHECKSUM}`
     );
 
   } catch (err) {
-    console.error("Ping Error:", err);
+    console.error("DEVICE-PING ERROR:", err);
     return res.send("ERRX");
   }
-});
+}
+
+// ======================================================
+// Short URL Handler (for Quectel 50-char URL limit)
+// ======================================================
+router.get("/:d", handlePacket);
 
 export default router;
