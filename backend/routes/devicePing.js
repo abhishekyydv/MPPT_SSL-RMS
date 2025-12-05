@@ -4,81 +4,131 @@ import Telemetry from "../models/TelemetryLog.js";
 
 const router = express.Router();
 
-// ---- Server Response Values (Required by Quectel) ----
-const FW_VERSION = "1007";
-const FW_CHECKSUM = "08";
-const UPDATE_RATE = "010";     // seconds or minutes – as per your system
-const UPDATE_CHECKSUM = "01";
+// ---- Server Response Values (required by Quectel) ----
+const FW_VERSION = "1007";       // your firmware version
+const FW_CHECKSUM = "08";        // sum of digits in version
+const UPDATE_RATE = "010";       // minutes/seconds as needed
+const UPDATE_CHECKSUM = "01";    // sum of digits in update rate
 
 // ---- Safe number parser ----
 function safeNum(v) {
-  if (!v) return null;
-  const n = parseFloat(v.trim());
+  if (v === undefined || v === null) return null;
+  const n = parseFloat(String(v).trim());
   return isNaN(n) ? null : n;
 }
 
-// ---- ULTRA SHORT ROUTE ----
-//  Example packet:
-//  /p/861268072771174,00,00.0,00.00,000.0,00.0,00.00,000.0
+// ------------------------------------------------------------------
+// 🔥 Ultra-short data capture route for Quectel
+// Example:
+//    /p/861268072771174,00,012.3,000.4,001.2,013.4,001.2,020.2, ...
+// ------------------------------------------------------------------
 router.get("/:d", async (req, res) => {
   try {
-    const raw = req.params.d;  // complete CSV string
+    const raw = req.params.d;
+    const parts = raw.split(",").map(x => x.trim());
 
-    const parts = raw.split(",").map(p => p.trim());
-    if (parts.length < 3) return res.send("ERR1");  // not enough parts
+    if (parts.length < 5) return res.send("ERR1");
 
+    // IMEI
     const imei = parts[0];
     if (!imei || imei.length < 10) return res.send("ERR2");
 
+    // Device registered check
     const device = await Device.findOne({ imei });
     if (!device) return res.send("ERR3");
 
-    // Map the data based on fixed Quectel order
-    const batteryVoltage = safeNum(parts[2]);
-    const solarVoltage   = safeNum(parts[3]);
-    const loadVoltage    = safeNum(parts[4]);
-    const current        = safeNum(parts[5]);
-    const efficiency     = safeNum(parts[6]);
+    // ----------- Quectel FIELD MAPPING -------------------
+    // Index reference based on your Quectel HTTP_Create_String()
 
-    const temperature = safeNum(parts[17]);
-    const humidity    = safeNum(parts[18]);
-    const lux         = safeNum(parts[19]);
+    const battPercent     = safeNum(parts[1]);
+    const battVoltage     = safeNum(parts[2]);
+    const battCurrent     = safeNum(parts[3]);
+    const battPower       = safeNum(parts[4]);
 
+    const solarVoltage    = safeNum(parts[5]);
+    const solarCurrent    = safeNum(parts[6]);
+    const solarPower      = safeNum(parts[7]);
+
+    const loadVoltage     = safeNum(parts[8]);
+    const loadCurrent     = safeNum(parts[9]);
+    const loadPower       = safeNum(parts[10]);
+
+    const statusByte      = parts[11] ?? null;
+    const changeFlag      = parts[12] ?? null;
+
+    const packetType      = safeNum(parts[13]);
+    const fullMin         = safeNum(parts[14]);
+    const dimMin          = safeNum(parts[15]);
+    const totalHours      = safeNum(parts[16]);
+
+    const kwh             = parts[17];
+    const tkwh            = parts[18];
+    const projectId       = safeNum(parts[19]);
+    // parts[20] = trailing "0" (ignored)
+
+    // -----------------------------------------------------
+
+    // Save telemetry
     const log = new Telemetry({
-      deviceId: device._id,
       imei,
-      batteryVoltage,
+      deviceId: device._id,
+
+      battPercent,
+      battVoltage,
+      battCurrent,
+      battPower,
+
       solarVoltage,
+      solarCurrent,
+      solarPower,
+
       loadVoltage,
-      current,
-      efficiency,
-      temperature,
-      humidity,
-      lux,
-      rawPayload: parts
+      loadCurrent,
+      loadPower,
+
+      statusByte,
+      changeFlag,
+
+      packetType,
+      fullMin,
+      dimMin,
+      totalHours,
+
+      kwh,
+      tkwh,
+      projectId,
+
+      rawPayload: parts,
     });
 
     await log.save();
 
-    // Emit live socket update for dashboard
+    // Emit live data
     req.io.emit("telemetry:update", {
       imei,
-      batteryVoltage,
+      battPercent,
+      battVoltage,
+      battCurrent,
+      battPower,
+
       solarVoltage,
+      solarCurrent,
+      solarPower,
+
       loadVoltage,
-      current,
-      efficiency,
-      temperature,
-      humidity,
-      lux,
-      time: new Date().toISOString()
+      loadCurrent,
+      loadPower,
+
+      time: new Date().toISOString(),
     });
 
-    // ⭐ MUST SEND TEXT RESPONSE THAT QUECTEL EXPECTS
-    return res.send(`PACK,${FW_VERSION},${FW_CHECKSUM},${UPDATE_RATE},${UPDATE_CHECKSUM}`);
+    // ⭐ RETURN ACK EXACT FORMAT (VERIFIED BY QUECTEL CODE)
+    return res.send(
+      `PACK,${FW_VERSION},${FW_CHECKSUM},${UPDATE_RATE},${UPDATE_CHECKSUM}`
+    );
 
   } catch (err) {
-    console.error("Ping error:", err);
+    console.error("Ping Error:", err);
     return res.send("ERRX");
   }
 });
